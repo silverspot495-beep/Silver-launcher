@@ -1,0 +1,87 @@
+name: Build Silver APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "arm64 = most phones, all = every CPU (big file)"
+        type: choice
+        default: arm64
+        options: [arm64, arm, x86_64, all]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      ARCH: ${{ github.event.inputs.arch || 'arm64' }}
+      CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+      OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply the Silver patch
+        run: |
+          pip install pillow numpy
+          python apply_silver.txt
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            PetLib/rust/target
+          key: petlib-rust-${{ runner.os }}-${{ hashFiles('PetLib/rust/Cargo.lock') }}
+          restore-keys: petlib-rust-${{ runner.os }}-
+
+      - name: Install cargo-ndk
+        run: |
+          version="4.1.2"
+          curl -sL "https://github.com/bbqsrc/cargo-ndk/releases/download/v${version}/cargo-ndk-x86_64-unknown-linux-gnu-v${version}.tgz" |
+            tar xz -C "$HOME/.cargo/bin" --strip-components=1
+          chmod +x "$HOME/.cargo/bin"/cargo-ndk*
+          cargo ndk --version
+
+      - name: Set up the Android NDK
+        run: |
+          ndk=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1)
+          if [ -z "$ndk" ] || [ ! -f "$ndk/source.properties" ]; then
+            sdkmanager --install "ndk;27.0.12077973"
+            ndk=$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)
+          fi
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew ZalithLauncher:assembleDebug -Darch=$ARCH
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SilverLauncher-${{ env.ARCH }}
+          path: ZalithLauncher/build/outputs/apk/debug/*.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: Latest Silver Launcher APK
+          files: ZalithLauncher/build/outputs/apk/debug/*.apk
