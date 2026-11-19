@@ -1,0 +1,818 @@
+#!/usr/bin/env python3
+"""
+Silver Launcher patch for Zalith Launcher 2 (run from the repo root, before building).
+
+Adds: the Silver theme (default), the wardrobe button + hero home card, Silver Launcher name,
+the snowflake app icon. Every group is applied all-or-nothing: if the Zalith source does not match
+what a group expects, that group is skipped and a warning is printed (the build still goes on).
+"""
+import base64, io, os, re, sys
+
+JAVA = "ZalithLauncher/src/main/java/com/movtery/zalithlauncher/"
+RES = "ZalithLauncher/src/main/res/"
+warnings, applied = [], []
+
+
+class Fail(Exception):
+    pass
+
+
+def read(p):
+    if not os.path.exists(p):
+        raise Fail("missing file " + p)
+    return open(p, encoding="utf-8").read()
+
+
+def write(p, s):
+    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+    open(p, "w", encoding="utf-8", newline="").write(s)
+
+
+def sub1(text, pattern, repl, what, flags=0):
+    new, n = re.subn(pattern, repl, text, count=0, flags=flags)
+    if n != 1:
+        raise Fail("%s: expected 1 match, found %d" % (what, n))
+    return new
+
+
+def apply_hunks(text, hunks, what):
+    spans = []
+    for old, new in hunks:
+        c = text.count(old)
+        if c != 1:
+            raise Fail("%s: block found %d times: %r" % (what, c, old[:70]))
+        i = text.index(old)
+        spans.append((i, i + len(old), new))
+    spans.sort()
+    for k in range(len(spans) - 1):
+        if spans[k][1] > spans[k + 1][0]:
+            raise Fail(what + ": overlapping blocks")
+    for i, j, new in reversed(spans):
+        text = text[:i] + new + text[j:]
+    return text
+
+
+def group(name):
+    def deco(fn):
+        try:
+            fn()
+            applied.append(name)
+        except Fail as e:
+            warnings.append("%s skipped: %s" % (name, e))
+        except Exception as e:  # keep the build going
+            warnings.append("%s skipped: %s: %s" % (name, type(e).__name__, e))
+        return fn
+    return deco
+
+SILVER_THEME = r'''/*
+ * Silver Client - unofficial modified version of Zalith Launcher 2
+ * Copyright (C) 2025-2026 MovTery <movtery228@qq.com> and contributors (Zalith Launcher 2)
+ * Modifications Copyright (C) 2026 Silver Client contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/gpl-3.0.txt>.
+
+package com.movtery.zalithlauncher.ui.theme
+
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.graphics.Color
+
+/**
+ * "Silver Client": deep plum surfaces, a hot-pink to violet accent and silver text.
+ * Same palette as the Silver Client launcher mock-up (pink 0xFFFF5FA2, violet 0xFFA66BFF).
+ */
+object SilverColors {
+    val Pink = Color(0xFFFF5FA2)
+    val Violet = Color(0xFFA66BFF)
+    val Silver = Color(0xFFC9CED8)
+    val Page = Color(0xFF150D17)
+    val Text = Color(0xFFF6EEF8)
+}
+
+internal val silverDark: ColorScheme = darkColorScheme(
+    primary = SilverColors.Pink,
+    onPrimary = Color(0xFF3F0021),
+    primaryContainer = Color(0xFF7A2552),
+    onPrimaryContainer = Color(0xFFFFD9E8),
+    secondary = SilverColors.Violet,
+    onSecondary = Color(0xFF2A0A5C),
+    secondaryContainer = Color(0xFF45286F),
+    onSecondaryContainer = Color(0xFFEBDDFF),
+    tertiary = SilverColors.Silver,
+    onTertiary = Color(0xFF1F232B),
+    tertiaryContainer = Color(0xFF3A3F4A),
+    onTertiaryContainer = Color(0xFFE6E9F0),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6),
+    background = SilverColors.Page,
+    onBackground = SilverColors.Text,
+    surface = SilverColors.Page,
+    onSurface = SilverColors.Text,
+    surfaceVariant = Color(0xFF2B1C2F),
+    onSurfaceVariant = Color(0xFFC9B5CF),
+    outline = Color(0xFF8E7794),
+    outlineVariant = Color(0xFF3F2C45),
+    scrim = Color(0xFF000000),
+    inverseSurface = SilverColors.Text,
+    inverseOnSurface = SilverColors.Page,
+    inversePrimary = Color(0xFFB0307A),
+    surfaceDim = Color(0xFF100913),
+    surfaceBright = Color(0xFF3A2A40),
+    surfaceContainerLowest = Color(0xFF0D070F),
+    surfaceContainerLow = Color(0xFF1B1120),
+    surfaceContainer = Color(0xFF211626),
+    surfaceContainerHigh = Color(0xFF2B1D31),
+    surfaceContainerHighest = Color(0xFF36263C),
+)
+
+internal val silverLight: ColorScheme = lightColorScheme(
+    primary = Color(0xFFC21E68),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFFFD9E8),
+    onPrimaryContainer = Color(0xFF3F0021),
+    secondary = Color(0xFF6B3FD1),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFEBDDFF),
+    onSecondaryContainer = Color(0xFF230A5C),
+    tertiary = Color(0xFF5A6070),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFE1E5EE),
+    onTertiaryContainer = Color(0xFF181B22),
+    error = Color(0xFFBA1A1A),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFDAD6),
+    onErrorContainer = Color(0xFF410002),
+    background = Color(0xFFFBF3F7),
+    onBackground = Color(0xFF2A1630),
+    surface = Color(0xFFFBF3F7),
+    onSurface = Color(0xFF2A1630),
+    surfaceVariant = Color(0xFFF0DDEA),
+    onSurfaceVariant = Color(0xFF5E4865),
+    outline = Color(0xFF8E7794),
+    outlineVariant = Color(0xFFD9C4D6),
+    scrim = Color(0xFF000000),
+    inverseSurface = Color(0xFF2A1630),
+    inverseOnSurface = Color(0xFFF6EEF8),
+    inversePrimary = Color(0xFFFF5FA2),
+    surfaceDim = Color(0xFFE8D8E2),
+    surfaceBright = Color(0xFFFFFFFF),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF7EAF1),
+    surfaceContainer = Color(0xFFF2E3EC),
+    surfaceContainerHigh = Color(0xFFEBDCE6),
+    surfaceContainerHighest = Color(0xFFE4D4DF),
+)
+'''
+
+
+@group("theme")
+def theme():
+    out = {}
+    p = JAVA + "ui/theme/ColorTheme.kt"
+    out[p] = sub1(read(p), r"(\n[ \t]*)EMBERMIRE,", r"\1SILVER,\1EMBERMIRE,", "enum")
+    p = JAVA + "ui/theme/Theme.kt"
+    t = sub1(read(p), r"(\n[ \t]*)(ColorThemeType\.EMBERMIRE -> embermireDark)",
+             r"\1ColorThemeType.SILVER -> silverDark\1\2", "dark colors")
+    out[p] = sub1(t, r"(\n[ \t]*)(ColorThemeType\.EMBERMIRE -> embermireLight)",
+                  r"\1ColorThemeType.SILVER -> silverLight\1\2", "light colors")
+    p = JAVA + "ui/theme/NativeThemeUtils.kt"
+    out[p] = sub1(read(p), r"(\n[ \t]*)(ColorThemeType\.EMBERMIRE -> if \(darkTheme\))",
+                  r"\1ColorThemeType.SILVER -> 0xFFFF5FA2.toInt()\1\2", "seed color")
+    p = JAVA + "ui/screens/content/settings/LauncherSettingsScreen.kt"
+    out[p] = sub1(read(p), r"(\n[ \t]*)(ColorThemeType\.EMBERMIRE -> stringResource\()",
+                  r"\1ColorThemeType.SILVER -> stringResource(R.string.theme_color_silver)\1\2", "settings list")
+    p = JAVA + "setting/AllSettings.kt"
+    out[p] = sub1(read(p), r'("launcherColorTheme",[ \t]*\n).*?(\n[ \t]*\)[ \t]*\n)',
+                  lambda m: m.group(1) + "        ColorThemeType.SILVER" + m.group(2), "default theme", re.S)
+    p = RES + "values/strings.xml"
+    t = read(p)
+    if "theme_color_silver" not in t:
+        t = sub1(t, r"</resources>", '    <string name="theme_color_silver">Silver Client</string>\n</resources>', "strings")
+    out[p] = t
+    out[JAVA + "ui/theme/SilverTheme.kt"] = SILVER_THEME
+    for p, s in out.items():
+        write(p, s)
+
+HOME = {
+    "ui/screens/content/AccountManageScreen.kt": [
+        (r'''import androidx.compose.material3.nonInteractiveScrollbar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+''',
+         r'''import androidx.compose.material3.nonInteractiveScrollbar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+'''),
+        (r'''}
+
+/**
+ * 账号皮肤操作逻辑处理
+ */
+@Composable
+''',
+         r'''}
+
+/**
+ * Lets the home card open the skin / cape wardrobe (same dialog as the account list) for an account.
+ * Provided by LauncherScreen; null when no provider is above.
+ */
+val LocalHomeSkinChanger = staticCompositionLocalOf<((Account) -> Unit)?> { null }
+
+/**
+ * Shows the wardrobe dialog on the home screen and returns the function that opens it for an account.
+ * Uses the same AccountManageViewModel as the account screen, so Change Skin / Reset / Confirm behave identically.
+ */
+@Composable
+fun rememberHomeSkinChanger(
+    eventViewModel: EventViewModel,
+    submitError: (ErrorViewModel.ThrowableMessage) -> Unit
+): (Account) -> Unit {
+    val viewModel: AccountManageViewModel = hiltViewModel { factory: AccountManageViewModel.Factory ->
+        factory.create(eventViewModel)
+    }
+    val profileUiState by viewModel.profileUiState.collectAsStateWithLifecycle()
+    val operationUiState by viewModel.operationUiState.collectAsStateWithLifecycle()
+
+    val actions = remember(viewModel, submitError) {
+        AccountActions(
+            onIntent = viewModel::onIntent,
+            openLink = {},
+            backToMainScreen = {},
+            navigateToWeb = {},
+            checkIfInWebScreen = { false },
+            formatError = { th -> viewModel.formatAccountError(th) },
+            submitError = submitError,
+        )
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.effect.collect { effect ->
+            when (effect) {
+                is AccountManageEffect.ShowError -> {
+                    submitError(ErrorViewModel.ThrowableMessage(effect.title, effect.message))
+                }
+            }
+        }
+    }
+
+    AccountSkinOperation(
+        accountSkinOperation = operationUiState.accountSkinOp,
+        skinDialogState = operationUiState.accountSkinDialogState,
+        accountCapes = profileUiState.accountCapeOpMap,
+        actions = actions
+    )
+
+    return remember(viewModel) {
+        { account: Account ->
+            if (!account.isAuthServerAccount()) {
+                viewModel.onIntent(
+                    AccountManageIntent.UpdateAccountSkinOp(AccountSkinOperation.ChangeSkin(account))
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 账号皮肤操作逻辑处理
+ */
+@Composable
+'''),
+    ],
+    "ui/screens/content/LauncherScreen.kt": [
+        (r'''import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+''',
+         r'''import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.background
+import com.movtery.zalithlauncher.viewmodel.EventViewModel
+import com.movtery.zalithlauncher.viewmodel.ErrorViewModel
+import com.movtery.zalithlauncher.game.account.isAuthServerAccount
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+'''),
+        (r'''    navigateToVersions: (Version) -> Unit,
+    onLaunchGame: (Version?) -> Unit,
+    onQuickPlayServer: (Version?, String) -> Unit,
+    onOpenLink: (String) -> Unit,
+    startGuideOnce: (GuideKeys.Keys) -> Unit,
+) {
+    LaunchedEffect(Unit) {
+        //发起新手引导
+        startGuideOnce(GuideKeys.Main)
+    }
+
+    BaseScreen(
+        screenKey = NormalNavKey.LauncherMain,
+        currentKey = backStackViewModel.mainScreen.currentKey
+    ) { isVisible ->
+        val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+''',
+         r'''    navigateToVersions: (Version) -> Unit,
+    onLaunchGame: (Version?) -> Unit,
+    onQuickPlayServer: (Version?, String) -> Unit,
+    onOpenLink: (String) -> Unit,
+    startGuideOnce: (GuideKeys.Keys) -> Unit,
+    eventViewModel: EventViewModel,
+    submitError: (ErrorViewModel.ThrowableMessage) -> Unit,
+) {
+    LaunchedEffect(Unit) {
+        //发起新手引导
+        startGuideOnce(GuideKeys.Main)
+    }
+
+    //Wardrobe (change skin / reset) straight from the home card
+    val changeSkin = rememberHomeSkinChanger(eventViewModel, submitError)
+
+    CompositionLocalProvider(LocalHomeSkinChanger provides changeSkin) {
+    BaseScreen(
+        screenKey = NormalNavKey.LauncherMain,
+        currentKey = backStackViewModel.mainScreen.currentKey
+    ) { isVisible ->
+        val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+'''),
+        (r'''                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContentMenu(
+    isVisible: Boolean,
+''',
+         r'''                    )
+                }
+            }
+        }
+    }
+    }
+}
+
+@Composable
+private fun ContentMenu(
+    isVisible: Boolean,
+'''),
+        (r'''            state = gridState,
+            isVisible = isVisible,
+            modifier = modifier
+                .fillMaxSize()
+                .animated(ctx)
+        )
+    }
+}
+
+@Composable
+''',
+         r'''            state = gridState,
+            isVisible = isVisible,
+            modifier = modifier
+                .fillMaxSize()
+                .animated(ctx)
+        )
+    }
+}
+
+/** Silver Client hero backdrop: plum gradient, pink glow behind the skin and a perspective grid floor. */
+@Composable
+private fun Modifier.silverStage(): Modifier {
+    val primary = MaterialTheme.colorScheme.primary
+    val base = MaterialTheme.colorScheme.surfaceContainerLow
+    val top = lerp(base, primary, 0.14f)
+    return this.drawBehind {
+        drawRect(Brush.verticalGradient(listOf(base, top)))
+        drawRect(
+            Brush.radialGradient(
+                colors = listOf(primary.copy(alpha = 0.34f), Color.Transparent),
+                center = Offset(size.width / 2f, size.height * 0.64f),
+                radius = size.minDimension * 0.75f
+            )
+        )
+        val horizon = size.height * 0.64f
+        val line = primary.copy(alpha = 0.30f)
+        for (n in 1..8) {
+            val t = n / 8f
+            val y = horizon + (size.height - horizon) * t * t
+            drawLine(line, Offset(0f, y), Offset(size.width, y), strokeWidth = 1.5f)
+        }
+        for (n in -8..8) {
+            drawLine(
+                line,
+                Offset(size.width / 2f + n * size.width * 0.02f, horizon),
+                Offset(size.width / 2f + n * size.width * 0.13f, size.height),
+                strokeWidth = 1.5f
+            )
+        }
+    }
+}
+
+/** Floating account pill on the hero: face, name, account type and the wardrobe button. */
+@Composable
+private fun SilverAccountPill(
+    account: Account?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))
+            .clickable(onClick = onClick)
+            .padding(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (account != null) {
+            PlayerFace(account = account, avatarSize = 34.dp)
+        } else {
+            Icon(
+                modifier = Modifier.size(34.dp).padding(6.dp),
+                painter = painterResource(R.drawable.ic_add),
+                contentDescription = null
+            )
+        }
+        Column {
+            Text(
+                text = account?.username ?: stringResource(R.string.account_add_new_account),
+                maxLines = 1,
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall
+            )
+            if (account != null) {
+                Text(
+                    text = getAccountTypeName(account),
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+        WardrobeButton(account = account)
+    }
+}
+
+/** Big pink-to-violet PLAY button with the selected version underneath. */
+@Composable
+private fun SilverPlayButton(
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val brush = Brush.horizontalGradient(
+        listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
+    )
+    val on = MaterialTheme.colorScheme.onPrimary
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(28.dp))
+            .background(brush)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.main_launch_game).uppercase(),
+            color = on,
+            maxLines = 1,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 4.sp,
+            style = MaterialTheme.typography.headlineSmall
+        )
+        Text(
+            text = subtitle,
+            color = on.copy(alpha = 0.85f),
+            maxLines = 1,
+            style = MaterialTheme.typography.labelLarge
+        )
+    }
+}
+
+/** Small hanger button on the home account card: opens the same wardrobe dialog as the account list. */
+@Composable
+private fun WardrobeButton(
+    account: Account?,
+    modifier: Modifier = Modifier
+) {
+    val changeSkin = LocalHomeSkinChanger.current
+    if (account == null || changeSkin == null || account.isAuthServerAccount()) return
+    IconButton(
+        modifier = modifier.size(36.dp),
+        onClick = { changeSkin(account) }
+    ) {
+        Icon(
+            modifier = Modifier.size(20.dp),
+            painter = painterResource(R.drawable.ic_checkroom),
+            contentDescription = stringResource(R.string.account_wardrobe)
+        )
+    }
+}
+
+@Composable
+'''),
+        (r'''                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccountAvatarRow(
+''',
+         r'''                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        }
+        WardrobeButton(account = account, modifier = Modifier.align(Alignment.TopEnd))
+    }
+}
+
+@Composable
+private fun AccountAvatarRow(
+'''),
+        (r'''                    text = getAccountTypeName(account),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VersionsContent(
+''',
+         r'''                    text = getAccountTypeName(account),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+        WardrobeButton(account = account)
+    }
+}
+
+@Composable
+private fun VersionsContent(
+'''),
+        (r'''                    )
+                }
+            }
+        }
+
+        ScalingActionButton(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(PaddingValues(horizontal = 12.dp))
+                .padding(bottom = 8.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 1.dp),
+            onClick = {
+                onLaunchGame(null)
+            },
+            content = {
+                MarqueeText(text = stringResource(R.string.main_launch_game))
+            }
+        )
+    }
+}
+
+@Composable
+''',
+         r'''                    )
+                }
+            }
+        }
+
+        SilverPlayButton(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(PaddingValues(horizontal = 12.dp))
+                .padding(bottom = 8.dp),
+            subtitle = version?.takeIf { it.isValid() }?.getVersionSummary()
+                ?: stringResource(R.string.versions_manage_no_versions),
+            onClick = { onLaunchGame(null) }
+        )
+    }
+}
+
+@Composable
+'''),
+        (r'''                account?.getCapeFile()?.takeIf { it.exists() }
+                    ?.inputStream()?.use { it.readBytes() }
+            }
+        }
+
+        PetModelView(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            skin = skinBytes,
+            cape = capeBytes,
+            arm = armModel,
+            yaw = yaw,
+            animation = PetAnimation.Idle,
+            tapReaction = PetTapReaction.Interact,
+            dragYaw = false
+        )
+
+        BackgroundCard(
+            modifier = Modifier
+                .guideNode(
+                    key = GuideKeys.Main.Step.Account,
+                    preferSide = GuideSide.Above,
+                    holeRadius = 28.dp
+                )
+                .fillMaxWidth(),
+            shape = MaterialTheme.shapes.extraLarge,
+            onClick = toAccountManageScreen
+        ) {
+            AccountAvatarRow(
+                modifier = Modifier.fillMaxWidth(),
+                account = account,
+            )
+        }
+
+        BackgroundCard(
+            modifier = Modifier.fillMaxWidth(),
+''',
+         r'''                account?.getCapeFile()?.takeIf { it.exists() }
+                    ?.inputStream()?.use { it.readBytes() }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.extraLarge)
+                .silverStage()
+        ) {
+            PetModelView(
+                modifier = Modifier.fillMaxSize(),
+                skin = skinBytes,
+                cape = capeBytes,
+                arm = armModel,
+                yaw = yaw,
+                animation = PetAnimation.Idle,
+                tapReaction = PetTapReaction.Interact,
+                dragYaw = false
+            )
+
+            SilverAccountPill(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(12.dp)
+                    .guideNode(
+                        key = GuideKeys.Main.Step.Account,
+                        preferSide = GuideSide.Below,
+                        holeRadius = 28.dp
+                    ),
+                account = account,
+                onClick = toAccountManageScreen
+            )
+        }
+
+        BackgroundCard(
+            modifier = Modifier.fillMaxWidth(),
+'''),
+    ],
+    "ui/screens/main/MainScreen.kt": [
+        (r'''                        },
+                        startGuideOnce = { keys ->
+                            eventViewModel.sendStartGuideOnce(keys)
+                        }
+                    )
+                }
+                entry<NestedNavKey.Settings> { key ->
+''',
+         r'''                        },
+                        startGuideOnce = { keys ->
+                            eventViewModel.sendStartGuideOnce(keys)
+                        },
+                        eventViewModel = eventViewModel,
+                        submitError = submitError
+                    )
+                }
+                entry<NestedNavKey.Settings> { key ->
+'''),
+    ],
+}
+
+
+@group("home")
+def home():
+    out = {}
+    for rel, hunks in HOME.items():
+        out[JAVA + rel] = apply_hunks(read(JAVA + rel), hunks, rel)
+    for p, s in out.items():
+        write(p, s)
+
+
+@group("name")
+def name():
+    p = "ZalithLauncher/gradle.properties"
+    t = read(p)
+    if re.search(r"(?m)^launcher_app_name=", t):
+        t = re.sub(r"(?m)^launcher_app_name=.*$", "launcher_app_name=Silver Launcher", t)
+    else:
+        raise Fail("launcher_app_name not found")
+    q = "ZalithLauncher/build.gradle.kts"
+    b = sub1(read(q), r'applicationId\s*=\s*"[^"]*"', 'applicationId = "com.silver.client"', "applicationId")
+    write(p, t)
+    write(q, b)
+
+LOGO_B64 = "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"
+
+
+@group("icons")
+def icons():
+    from PIL import Image, ImageDraw
+    import numpy as np
+    src = Image.open(io.BytesIO(base64.b64decode(LOGO_B64))).convert("RGBA")
+
+    def canvas(size, frac):
+        c = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        s = max(1, int(size * frac))
+        c.alpha_composite(src.resize((s, s), Image.NEAREST if s % 256 == 0 else Image.LANCZOS), ((size - s) // 2, (size - s) // 2))
+        return c
+
+    os.makedirs(RES + "drawable-nodpi", exist_ok=True)
+    fg = canvas(432, 0.60)
+    fg.save(RES + "drawable-nodpi/ic_launcher_foreground.png")
+    mono = np.asarray(fg).copy()
+    mono[..., :3] = 255
+    Image.fromarray(mono).save(RES + "drawable-nodpi/ic_launcher_monochrome.png")
+    for f in ("drawable/ic_launcher_foreground.xml", "drawable/ic_launcher_monochrome.xml"):
+        if os.path.exists(RES + f):
+            os.remove(RES + f)
+    write(RES + "values/ic_launcher_background.xml",
+          '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+          '    <color name="ic_launcher_background">#18191D</color>\n</resources>\n')
+    bg = (24, 25, 29, 255)
+    for d, sz in {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}.items():
+        S = sz * 4
+        for nm, rnd in (("ic_launcher", False), ("ic_launcher_round", True)):
+            base = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+            dr = ImageDraw.Draw(base)
+            if rnd:
+                dr.ellipse((0, 0, S - 1, S - 1), fill=bg)
+            else:
+                dr.rounded_rectangle((0, 0, S - 1, S - 1), radius=S // 5, fill=bg)
+            base.alpha_composite(canvas(S, 0.78))
+            os.makedirs(RES + "mipmap-" + d, exist_ok=True)
+            base.resize((sz, sz), Image.LANCZOS).save(RES + "mipmap-%s/%s.webp" % (d, nm), lossless=True)
+    if os.path.exists(RES + "drawable/img_launcher.png"):
+        canvas(350, 1.0).save(RES + "drawable/img_launcher.png")
+
+
+print("Silver patch applied: " + (", ".join(applied) or "nothing"))
+for w in warnings:
+    print("::warning::" + w)
+    print("WARNING: " + w)
